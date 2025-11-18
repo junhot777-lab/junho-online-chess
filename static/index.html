@@ -2,8 +2,9 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <title>Junho Online Learning Chess</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
+  <title>Junho Online-Learning Chess</title>
+
+  <link rel="stylesheet" href="/static/chessboard.css">
   <style>
     body { display: flex; flex-direction: column; align-items: center; gap: 10px; font-family: sans-serif; }
     #board { width: 400px; }
@@ -15,8 +16,8 @@
   <button id="reset">리셋</button>
   <pre id="status"></pre>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.13.4/chess.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+  <script src="/static/chess.js"></script>
+  <script src="/static/chessboard.js"></script>
 
   <script>
     const game = new Chess();
@@ -26,16 +27,14 @@
       position: "start",
       draggable: true,
       onDrop: onDrop,
-      orientation: "white"  // 너 항상 백으로 둔다고 가정
+      orientation: "white"
     });
 
     updateStatus();
 
     async function onDrop(source, target) {
-      // 수 두기 전 FEN 저장
       const fenBefore = game.fen();
 
-      // 유저 수 반영
       const move = game.move({
         from: source,
         to: target,
@@ -49,45 +48,35 @@
       board.position(game.fen());
       updateStatus();
 
-      // UCI 형태로 변환 (e2e4, e7e8q 등)
       const uci = move.from + move.to + (move.promotion || "");
 
-      // 1) 서버에 학습 요청
-      try {
-        await fetch("/api/train", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({
-            fen: fenBefore,
-            move: uci
-          })
-        });
-      } catch (e) {
-        console.log("train error", e);
-      }
+      await fetch("/api/train", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          fen: fenBefore,
+          move: uci
+        })
+      });
 
-      // 2) 엔진 수 요청
       await engineMove();
     }
 
     async function engineMove() {
       if (game.game_over()) return;
 
-      try {
-        const res = await fetch("/api/next_move", {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({ fen: game.fen() })
-        });
-        const data = await res.json();
-        if (!data.move) return;
+      const res = await fetch("/api/next_move", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ fen: game.fen() })
+      });
+      const data = await res.json();
 
-        game.move(data.move, { sloppy: true });
-        board.position(game.fen());
-        updateStatus();
-      } catch (e) {
-        console.log("engine error", e);
-      }
+      if (!data.move) return;
+
+      game.move(data.move, { sloppy: true });
+      board.position(game.fen());
+      updateStatus();
     }
 
     function updateStatus() {
@@ -96,7 +85,7 @@
       if (game.in_checkmate()) {
         status = "체크메이트!";
       } else if (game.in_draw()) {
-        status = "무승부 느낌";
+        status = "무승부!";
       } else {
         status = (game.turn() === "w" ? "백" : "흑") + " 차례";
       }
