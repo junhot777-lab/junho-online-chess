@@ -4,10 +4,20 @@
   <meta charset="UTF-8" />
   <title>Junho Online-Learning Chess</title>
 
-  <link rel="stylesheet" href="/static/chessboard.css">
+  <!-- 체스보드 CSS (CDN) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
   <style>
-    body { display: flex; flex-direction: column; align-items: center; gap: 10px; font-family: sans-serif; }
-    #board { width: 400px; }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      font-family: sans-serif;
+      margin-top: 40px;
+    }
+    #board {
+      width: 400px;
+    }
   </style>
 </head>
 <body>
@@ -16,10 +26,14 @@
   <button id="reset">리셋</button>
   <pre id="status"></pre>
 
-  <script src="/static/chess.js"></script>
-  <script src="/static/chessboard.js"></script>
+  <!-- 체스 로직 & 보드 라이브러리 (CDN) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.13.4/chess.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
 
   <script>
+    // JS가 제대로 로드됐는지 테스트
+    console.log("index.js loaded");
+
     const game = new Chess();
     const statusEl = document.getElementById("status");
 
@@ -27,7 +41,7 @@
       position: "start",
       draggable: true,
       onDrop: onDrop,
-      orientation: "white"
+      orientation: "white"  // 너는 백
     });
 
     updateStatus();
@@ -50,14 +64,18 @@
 
       const uci = move.from + move.to + (move.promotion || "");
 
-      await fetch("/api/train", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          fen: fenBefore,
-          move: uci
-        })
-      });
+      try {
+        await fetch("/api/train", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            fen: fenBefore,
+            move: uci
+          })
+        });
+      } catch (e) {
+        console.log("train error", e);
+      }
 
       await engineMove();
     }
@@ -65,18 +83,21 @@
     async function engineMove() {
       if (game.game_over()) return;
 
-      const res = await fetch("/api/next_move", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ fen: game.fen() })
-      });
-      const data = await res.json();
+      try {
+        const res = await fetch("/api/next_move", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ fen: game.fen() })
+        });
+        const data = await res.json();
+        if (!data.move) return;
 
-      if (!data.move) return;
-
-      game.move(data.move, { sloppy: true });
-      board.position(game.fen());
-      updateStatus();
+        game.move(data.move, { sloppy: true });
+        board.position(game.fen());
+        updateStatus();
+      } catch (e) {
+        console.log("engine error", e);
+      }
     }
 
     function updateStatus() {
