@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>Junho Online-Learning Chess</title>
 
-  <!-- 실제 업로드된 파일 이름과 일치하게 수정 -->
+  <!-- chessboard.css -->
   <link rel="stylesheet" href="/static/chessboard-1.0.0.min.css" />
 
   <style>
@@ -21,14 +21,17 @@
     }
   </style>
 </head>
+
 <body>
   <h1>Junho Online-Learning Chess</h1>
   <div id="board"></div>
   <button id="reset">리셋</button>
   <pre id="status"></pre>
 
-  <!-- 실제 파일 이름과 일치 -->
+  <!-- 브라우저 전용 chess.js (0.13.4, export 없는 안정 버전) -->
   <script src="/static/chess.min.js"></script>
+
+  <!-- chessboard.js -->
   <script src="/static/chessboard-1.0.0.min.js"></script>
 
   <script>
@@ -72,7 +75,7 @@
           })
         });
       } catch (e) {
-        console.log(e);
+        console.log("train error", e);
       }
 
       await engineMove();
