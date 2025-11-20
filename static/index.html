@@ -4,8 +4,9 @@
   <meta charset="UTF-8" />
   <title>Junho Online-Learning Chess</title>
 
-  <!-- 체스보드 CSS (CDN) -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
+  <!-- 실제 업로드된 파일 이름과 일치하게 수정 -->
+  <link rel="stylesheet" href="/static/chessboard-1.0.0.min.css" />
+
   <style>
     body {
       display: flex;
@@ -26,13 +27,12 @@
   <button id="reset">리셋</button>
   <pre id="status"></pre>
 
-  <!-- 체스 로직 & 보드 라이브러리 (CDN) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.13.4/chess.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+  <!-- 실제 파일 이름과 일치 -->
+  <script src="/static/chess.min.js"></script>
+  <script src="/static/chessboard-1.0.0.min.js"></script>
 
   <script>
-    // JS가 제대로 로드됐는지 테스트
-    console.log("index.js loaded");
+    console.log("index.html loaded");
 
     const game = new Chess();
     const statusEl = document.getElementById("status");
@@ -41,7 +41,7 @@
       position: "start",
       draggable: true,
       onDrop: onDrop,
-      orientation: "white"  // 너는 백
+      orientation: "white"
     });
 
     updateStatus();
@@ -55,9 +55,7 @@
         promotion: "q"
       });
 
-      if (move === null) {
-        return "snapback";
-      }
+      if (!move) return "snapback";
 
       board.position(game.fen());
       updateStatus();
@@ -67,14 +65,14 @@
       try {
         await fetch("/api/train", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             fen: fenBefore,
             move: uci
           })
         });
       } catch (e) {
-        console.log("train error", e);
+        console.log(e);
       }
 
       await engineMove();
@@ -86,9 +84,10 @@
       try {
         const res = await fetch("/api/next_move", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ fen: game.fen() })
         });
+
         const data = await res.json();
         if (!data.move) return;
 
@@ -103,13 +102,9 @@
     function updateStatus() {
       let status = "";
 
-      if (game.in_checkmate()) {
-        status = "체크메이트!";
-      } else if (game.in_draw()) {
-        status = "무승부!";
-      } else {
-        status = (game.turn() === "w" ? "백" : "흑") + " 차례";
-      }
+      if (game.in_checkmate()) status = "체크메이트!";
+      else if (game.in_draw()) status = "무승부!";
+      else status = (game.turn() === "w" ? "백" : "흑") + " 차례";
 
       status += "\nFEN: " + game.fen();
       statusEl.textContent = status;
