@@ -1,221 +1,189 @@
 # app.py
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import chess
+import json
+from pathlib import Path
+from typing import Dict, DefaultDict
+from collections import defaultdict
+import random
 
+import torch
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
+import chess
 
-# ====== 기본 설정 ======
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = "junho_online.pt"
-TRAIN_SAVE_INTERVAL = 50
+# ----------------------------------------------------------------------
+# 설정
+# ----------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+MODEL_PATH = BASE_DIR / "junho_online.pt"
 
-# ====== 체스 인코딩 ======
+SAVE_EVERY_N_UPDATES = 20  # 20번 학습마다 한 번씩 저장
 
-PIECE_TYPES = [
-    chess.PAWN,
-    chess.KNIGHT,
-    chess.BISHOP,
-    chess.ROOK,
-    chess.QUEEN,
-    chess.KING,
-]
+# ----------------------------------------------------------------------
+# 간단한 "학습" 메모리 (진짜 딥러닝은 아니고, FEN별로 수 통계 저장)
+# torch.save / load 로만 torch를 써서 Render 설치 실패 안 나게 함
+# ----------------------------------------------------------------------
+# memory[fen][move_uci] = count
+MemoryType = DefaultDict[str, Dict[str, int]]
+memory: MemoryType = defaultdict(dict)
+update_counter = 0
 
-def board_to_tensor(fen: str) -> torch.Tensor:
-    """
-    FEN -> (12, 8, 8) tensor
-    white 6채널, black 6채널
-    """
-    board = chess.Board(fen)
-    planes = torch.zeros((12, 8, 8), dtype=torch.float32)
 
-    for square, piece in board.piece_map().items():
-        row = 7 - (square // 8)
-        col = square % 8
-        offset = 0 if piece.color == chess.WHITE else 6
-        idx = offset + PIECE_TYPES.index(piece.piece_type)
-        planes[idx, row, col] = 1.0
+def load_memory():
+    global memory
+    if MODEL_PATH.exists():
+        try:
+            obj = torch.load(MODEL_PATH, map_location="cpu")
+            if isinstance(obj, dict):
+                memory = defaultdict(dict, obj)
+            print(f"[INFO] Loaded memory from {MODEL_PATH}")
+        except Exception as e:
+            print(f"[WARN] Failed to load memory: {e}")
+    else:
+        print("[INFO] No existing memory file, starting fresh.")
 
-    return planes  # (12,8,8)
 
-def move_to_index(move_uci: str) -> int:
-    """
-    "e2e4" -> idx (0~4095)
-    """
-    move = chess.Move.from_uci(move_uci)
-    return move.from_square * 64 + move.to_square
-
-def index_to_legal_move(idx: int, board: chess.Board):
-    """
-    index -> Move (합법이면 리턴, 아니면 None)
-    """
-    from_sq = idx // 64
-    to_sq = idx % 64
-    move = chess.Move(from_sq, to_sq)
-    if move in board.legal_moves:
-        return move
-    return None
-
-# ====== 모델 정의 ======
-
-class JunhoNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.fc1 = nn.Linear(12 * 8 * 8, 512)
-        self.fc2 = nn.Linear(512, 64 * 64)
-
-    def forward(self, x):
-        # x: (B, 12, 8, 8)
-        x = x.view(x.size(0), -1)  # (B, 768)
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)  # (B, 4096)
-        return x
-
-# ====== 전역 모델 / 옵티마이저 ======
-
-model = JunhoNet().to(DEVICE)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-train_steps = 0
-
-def load_model():
-    global model, optimizer, train_steps
+def save_memory():
     try:
-        ckpt = torch.load(MODEL_PATH, map_location=DEVICE)
-        model.load_state_dict(ckpt["model"])
-        optimizer.load_state_dict(ckpt["opt"])
-        train_steps = ckpt.get("steps", 0)
-        print("모델 로드 완료:", MODEL_PATH, "steps:", train_steps)
+        torch.save(dict(memory), MODEL_PATH)
+        print(f"[INFO] Saved memory to {MODEL_PATH}")
     except Exception as e:
-        print("저장된 모델 없음 / 로드 실패, 새로 시작:", e)
+        print(f"[WARN] Failed to save memory: {e}")
 
-def save_model():
-    global model, optimizer, train_steps
-    torch.save(
-        {
-            "model": model.state_dict(),
-            "opt": optimizer.state_dict(),
-            "steps": train_steps,
-        },
-        MODEL_PATH,
-    )
-    print("모델 저장:", MODEL_PATH, "steps:", train_steps)
 
-load_model()
+def record_move(fen: str, move_uci: str):
+    """사용자가 둔 수를 FEN별로 카운트."""
+    global update_counter
+    table = memory.get(fen, {})
+    table[move_uci] = table.get(move_uci, 0) + 1
+    memory[fen] = table
+    update_counter += 1
+    if update_counter >= SAVE_EVERY_N_UPDATES:
+        save_memory()
+        update_counter = 0
 
-# ====== 학습 함수 ======
 
-def train_one(fen: str, move_uci: str):
-    global model, optimizer, train_steps
+def choose_move(fen: str, legal_uci_list):
+    """
+    FEN에 대해 과거에 자주 둔 수를 더 자주 선택.
+    기억 없으면 랜덤.
+    """
+    table = memory.get(fen)
+    if not table:
+        return random.choice(legal_uci_list)
 
-    board = chess.Board(fen)
-    try:
-        move = chess.Move.from_uci(move_uci)
-    except Exception:
-        return
+    # 기억된 수만 필터링
+    weighted = []
+    total_weight = 0
+    for uci in legal_uci_list:
+        w = table.get(uci, 1)  # 안 본 수라도 weight 1
+        weighted.append((uci, w))
+        total_weight += w
 
-    # 실제 합법 수 아니면 학습 안 함
-    if move not in board.legal_moves:
-        return
+    r = random.uniform(0, total_weight)
+    upto = 0.0
+    for uci, w in weighted:
+        upto += w
+        if upto >= r:
+            return uci
+    # 혹시 모를 예외
+    return random.choice(legal_uci_list)
 
-    x = board_to_tensor(fen).unsqueeze(0).to(DEVICE)  # (1,12,8,8)
-    y_idx = move_to_index(move_uci)
-    y = torch.tensor([y_idx], dtype=torch.long, device=DEVICE)  # (1,)
 
-    model.train()
-    logits = model(x)
-    loss = F.cross_entropy(logits, y)
+# ----------------------------------------------------------------------
+# FastAPI 앱 설정 + static 서빙
+# ----------------------------------------------------------------------
+app = FastAPI(title="Junho Online-Learning Chess")
 
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-
-    train_steps += 1
-    if train_steps % TRAIN_SAVE_INTERVAL == 0:
-        save_model()
-
-# ====== 수 선택 함수 ======
-
-def pick_move(fen: str) -> str:
-    board = chess.Board(fen)
-    legal_moves = list(board.legal_moves)
-    if not legal_moves:
-        return ""
-
-    x = board_to_tensor(fen).unsqueeze(0).to(DEVICE)
-
-    model.eval()
-    with torch.no_grad():
-        logits = model(x)[0]  # (4096,)
-
-    # 합법 수 마스크
-    mask = torch.zeros_like(logits)
-    for mv in legal_moves:
-        idx = mv.from_square * 64 + mv.to_square
-        mask[idx] = 1.0
-
-    probs = F.softmax(logits, dim=0) * mask
-    if probs.sum().item() <= 0:
-        # 아직 학습 거의 안된 상태일 때
-        move = legal_moves[0]
-        return move.uci()
-
-    probs = probs / probs.sum()
-    idx = torch.multinomial(probs, 1).item()
-    move = index_to_legal_move(idx, board)
-    if move is None:
-        move = legal_moves[0]
-    return move.uci()
-
-# ====== FastAPI 설정 ======
-
-app = FastAPI()
-
-# CORS (필요시)
+# CORS (필요하면 나중에 수정)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_headers=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# 정적 파일 (index.html 서빙)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# /static 경로로 정적 파일 서빙 (css, js, 이미지 다 여기서 나감)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-@app.get("/")
-def root():
-    return FileResponse("static/index.html")
 
-# ====== API 스키마 ======
-
+# ----------------------------------------------------------------------
+# 요청 스키마
+# ----------------------------------------------------------------------
 class TrainRequest(BaseModel):
     fen: str
-    move: str   # 사용자가 둔 수 (uci)
+    move: str  # UCI string, e.g. "e2e4", "g1f3"
 
-class MoveRequest(BaseModel):
+
+class NextMoveRequest(BaseModel):
     fen: str
 
-class MoveResponse(BaseModel):
-    move: str
 
-# ====== 엔드포인트 ======
+# ----------------------------------------------------------------------
+# 라우트
+# ----------------------------------------------------------------------
+@app.on_event("startup")
+def on_startup():
+    load_memory()
+
+
+@app.get("/")
+async def index():
+    """
+    메인 페이지: static/index.html 반환
+    """
+    index_file = STATIC_DIR / "index.html"
+    return FileResponse(str(index_file))
+
 
 @app.post("/api/train")
-def api_train(req: TrainRequest):
+async def api_train(req: TrainRequest):
     """
-    사용자가 한 수를 학습
+    사용자가 둔 수를 학습 메모리에 저장.
     """
-    train_one(req.fen, req.move)
-    return {"status": "ok"}
+    try:
+        # FEN 검증 + 합법성 체크
+        board = chess.Board(req.fen)
+        move = chess.Move.from_uci(req.move)
 
-@app.post("/api/next_move", response_model=MoveResponse)
-def api_next_move(req: MoveRequest):
+        if move not in board.legal_moves:
+            return {"ok": False, "reason": "illegal move"}
+
+        record_move(req.fen, req.move)
+        return {"ok": True}
+    except Exception as e:
+        # 클라이언트 쪽에서 그냥 무시해도 되는 에러
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/next_move")
+async def api_next_move(req: NextMoveRequest):
     """
-    현재 FEN에서 엔진 수 선택
+    서버가 다음 수를 선택해서 반환.
+    FEN 기반으로 지금까지 유저가 자주 둔 수를 흉내냄.
     """
-    mv = pick_move(req.fen)
-    return MoveResponse(move=mv)
+    try:
+        board = chess.Board(req.fen)
+    except Exception as e:
+        return {"ok": False, "error": f"invalid fen: {e}", "move": None}
+
+    legal_moves = list(board.legal_moves)
+    if not legal_moves:
+        return {"ok": True, "move": None}
+
+    legal_uci = [m.uci() for m in legal_moves]
+    best_uci = choose_move(req.fen, legal_uci)
+
+    return {"ok": True, "move": best_uci}
+
+
+# ----------------------------------------------------------------------
+# 헬스체크 (Render ping용)
+# ----------------------------------------------------------------------
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
