@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <title>Junho Online-Learning Chess</title>
 
-  <!-- chessboard 스타일 -->
   <link rel="stylesheet" href="/static/chessboard-1.0.0.min.css" />
 
   <style>
@@ -16,38 +15,35 @@
       font-family: sans-serif;
       margin-top: 40px;
     }
-    #board {
-      width: 400px;
-    }
+    #board { width: 400px; }
   </style>
 </head>
+
 <body>
   <h1>Junho Online-Learning Chess</h1>
   <div id="board"></div>
   <button id="reset">리셋</button>
   <pre id="status"></pre>
 
-  <!-- chessboard.js 는 옛날 방식 UMD -->
+  <!-- 중요: 전역 스크립트 순서 -->
+  <script src="/static/chess.min.js"></script>
   <script src="/static/chessboard-1.0.0.min.js"></script>
 
-  <!-- 여기부터 ES 모듈 스크립트 -->
-  <script type="module">
-    // ES 모듈로 chess.min.js를 import
-    import { Chess } from '/static/chess.min.js';
+  <script>
+    console.log("index.html loaded");
 
-    // 전역에서 쓸 수 있게 window에 꽂기 (혹시 필요하면)
-    window.Chess = Chess;
+    if (!window.Chess) {
+      console.error("Chess not loaded");
+    }
 
-    console.log("index.html loaded (module)");
+    const game = new Chess();  // 전역 클래스 자동 있음
 
-    const game = new Chess();
     const statusEl = document.getElementById("status");
 
     const board = Chessboard("board", {
       position: "start",
       draggable: true,
-      onDrop: onDrop,
-      orientation: "white"
+      onDrop: onDrop
     });
 
     updateStatus();
@@ -72,13 +68,10 @@
         await fetch("/api/train", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fen: fenBefore,
-            move: uci
-          })
+          body: JSON.stringify({ fen: fenBefore, move: uci })
         });
-      } catch (e) {
-        console.log("train error", e);
+      } catch (err) {
+        console.log("train fail", err);
       }
 
       await engineMove();
@@ -93,15 +86,15 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ fen: game.fen() })
         });
+
         const data = await res.json();
         if (!data.move) return;
 
-        // sloppy 옵션 쓰면 UCI/알제브릭 섞여도 어느 정도 처리됨
         game.move(data.move, { sloppy: true });
         board.position(game.fen());
         updateStatus();
-      } catch (e) {
-        console.log("engine error", e);
+      } catch (err) {
+        console.log("engine fail", err);
       }
     }
 
