@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>Junho Online-Learning Chess</title>
 
-  <!-- chessboard.css -->
+  <!-- chessboard 스타일 -->
   <link rel="stylesheet" href="/static/chessboard-1.0.0.min.css" />
 
   <style>
@@ -21,21 +21,24 @@
     }
   </style>
 </head>
-
 <body>
   <h1>Junho Online-Learning Chess</h1>
   <div id="board"></div>
   <button id="reset">리셋</button>
   <pre id="status"></pre>
 
-  <!-- 브라우저 전용 chess.js (0.13.4, export 없는 안정 버전) -->
-  <script src="/static/chess.min.js"></script>
-
-  <!-- chessboard.js -->
+  <!-- chessboard.js 는 옛날 방식 UMD -->
   <script src="/static/chessboard-1.0.0.min.js"></script>
 
-  <script>
-    console.log("index.html loaded");
+  <!-- 여기부터 ES 모듈 스크립트 -->
+  <script type="module">
+    // ES 모듈로 chess.min.js를 import
+    import { Chess } from '/static/chess.min.js';
+
+    // 전역에서 쓸 수 있게 window에 꽂기 (혹시 필요하면)
+    window.Chess = Chess;
+
+    console.log("index.html loaded (module)");
 
     const game = new Chess();
     const statusEl = document.getElementById("status");
@@ -90,10 +93,10 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ fen: game.fen() })
         });
-
         const data = await res.json();
         if (!data.move) return;
 
+        // sloppy 옵션 쓰면 UCI/알제브릭 섞여도 어느 정도 처리됨
         game.move(data.move, { sloppy: true });
         board.position(game.fen());
         updateStatus();
