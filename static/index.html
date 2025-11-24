@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <title>Junho Online-Learning Chess</title>
 
+  <!-- 로컬 chessboard CSS -->
   <link rel="stylesheet" href="/static/chessboard-1.0.0.min.css" />
 
   <style>
@@ -15,28 +16,31 @@
       font-family: sans-serif;
       margin-top: 40px;
     }
-    #board { width: 400px; }
+    #board {
+      width: 400px;
+    }
   </style>
 </head>
-
 <body>
   <h1>Junho Online-Learning Chess</h1>
   <div id="board"></div>
   <button id="reset">리셋</button>
   <pre id="status"></pre>
 
-  <!-- 중요: 전역 스크립트 순서 -->
+  <!-- *** 여기가 핵심: 오직 이 한 줄만 chess.js 로딩 *** -->
   <script src="/static/chess.min.js"></script>
+  <!-- chessboard.js -->
   <script src="/static/chessboard-1.0.0.min.js"></script>
 
   <script>
     console.log("index.html loaded");
+    console.log("Chess in window?", typeof window.Chess);
 
     if (!window.Chess) {
       console.error("Chess not loaded");
     }
 
-    const game = new Chess();  // 전역 클래스 자동 있음
+    const game = new Chess(); // 전역으로 올라온 Chess 사용
 
     const statusEl = document.getElementById("status");
 
@@ -70,8 +74,8 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ fen: fenBefore, move: uci })
         });
-      } catch (err) {
-        console.log("train fail", err);
+      } catch (e) {
+        console.log("train error", e);
       }
 
       await engineMove();
@@ -86,15 +90,14 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ fen: game.fen() })
         });
-
         const data = await res.json();
         if (!data.move) return;
 
         game.move(data.move, { sloppy: true });
         board.position(game.fen());
         updateStatus();
-      } catch (err) {
-        console.log("engine fail", err);
+      } catch (e) {
+        console.log("engine error", e);
       }
     }
 
